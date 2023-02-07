@@ -1,0 +1,97 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r}
+#function for interactive selection
+#take a dataframe containing x and y coordinates and id as rownames
+#returns list of ids
+library(shiny)
+library(miniUI)
+library(plotly)
+interactive_points_selection <- function(dat, x, y, key = row.names(dat),sample_id){
+  title_ <- paste0("Interactive selection of points for sample: ",sample_id)
+  ui <- miniPage(
+    gadgetTitleBar(title_),
+    plotlyOutput("plot1", height = "100%")
+  )
+
+  server <- function(input, output, session) {
+
+    # mechanism for managing selected points
+    keys <- reactiveVal()
+
+    observeEvent(event_data("plotly_selected"), {
+      key_new <- event_data("plotly_selected")$key
+      key_old <- keys()
+      keys(c(key_new, key_old))
+    })
+
+    output$plot1 <- renderPlotly({
+      is_outlier <- key %in% keys()
+      cols <- ifelse(is_outlier, "red", "grey90")
+      dat %>%
+        plot_ly(x = x, y = y) %>%
+        plotly::add_markers(key = row.names(dat), color = I(cols), marker = list(size = 5))%>%
+        plotly::layout(dragmode='lasso')%>%
+        toWebGL()
+    })
+    # Return the most recent fitted model, when we press "done"
+    observeEvent(input$done, {
+      cat(keys(),fill = T,sep=',')
+      stopApp()
+    })
+  }
+  shinyApp(ui, server)
+}
+#wrapper function:
+# Prepare dataframe from seurat object selected by a sample id (from orig.ident)
+# Capture and parse output of shiny app
+# Outputs list of selected cells
+interactive_points_keep <- function(seurat_object){
+  df<- as.data.frame(cbind(seurat_object@images$anterior1@coordinates$col,seurat_object@images$anterior1@coordinates$row))
+  colnames(df) <- c('x','y')
+  rownames(df) <- colnames(seurat_object)
+  cells_to_keep <- suppressWarnings(capture.output(interactive_points_selection(df, x = ~x, y = ~y,sample_id = unique(seurat_object$orig.ident))))
+  cells_to_keep <- paste0(cells_to_keep, collapse = '')
+  cells_to_keep <- unlist(strsplit(cells_to_keep,','))
+  return(cells_to_keep)
+}
+```
+
+```{r}
+library(Seurat)
+library(SeuratData)
+#InstallData("stxBrain")
+```
+#Load example
+```{r}
+brain <- LoadData("stxBrain", type = "anterior1")
+```
+
+#Annotate region A
+```{r}
+#Get spots corresponding to region A
+region_A_spots <- interactive_points_keep(seurat_object = brain)
+#Get spots corresponding to region B
+region_B_spots <- interactive_points_keep(seurat_object = brain)
+
+#Add metadata "spot_annotation" and initiate all spots as 'others'
+brain <- AddMetaData(brain,'other','spot_annotation')
+#Add region A
+brain$spot_annotation[region_A_spots] <- 'region_A'
+#Add region B
+brain$spot_annotation[region_B_spots] <- 'region_B'
+```
+
+# Plot annotated regions 
+```{r,cache-T}
+SpatialDimPlot(brain,'spot_annotation')
+```
+
+
+
